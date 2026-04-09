@@ -9,8 +9,8 @@ func TestLoadConfigFromEnv_Defaults(t *testing.T) {
 	t.Setenv("AGENT_VERSION", "")
 
 	cfg := LoadConfigFromEnv()
-	if cfg.DefaultPollSeconds != 30 {
-		t.Fatalf("expected default poll 30, got %d", cfg.DefaultPollSeconds)
+	if cfg.DefaultPollSeconds != 15 {
+		t.Fatalf("expected default poll 15, got %d", cfg.DefaultPollSeconds)
 	}
 	if cfg.IdentityPath != "identity.json" {
 		t.Fatalf("expected default identity path identity.json, got %q", cfg.IdentityPath)
@@ -45,7 +45,7 @@ func TestLoadConfigFromEnv_OverridesAndInvalidPoll(t *testing.T) {
 
 	t.Setenv("CONFIG_POLL_SECONDS", "not-a-number")
 	cfg = LoadConfigFromEnv()
-	if cfg.DefaultPollSeconds != 30 {
-		t.Fatalf("expected fallback poll 30 for invalid value, got %d", cfg.DefaultPollSeconds)
+	if cfg.DefaultPollSeconds != 15 {
+		t.Fatalf("expected fallback poll 15 for invalid value, got %d", cfg.DefaultPollSeconds)
 	}
 }

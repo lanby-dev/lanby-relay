@@ -53,9 +53,27 @@ type RelayCheckConfig struct {
 	DNSNameserver          string            `json:"dns_nameserver,omitempty"`
 	GRPCService            string            `json:"grpc_service,omitempty"`
 	GRPTLS                 bool              `json:"grpc_tls,omitempty"`
+	Retries                int               `json:"retries,omitempty"`
+	RecoverySuccesses      int               `json:"recovery_successes,omitempty"`
+	SlowThresholdMs        int               `json:"slow_threshold_ms,omitempty"`
 }
 
 type ConfigResponse struct {
+	ConfigVersion             int64              `json:"config_version"`
+	ConfigPollIntervalSeconds int                `json:"config_poll_interval_seconds"`
+	Checks                    []RelayCheckConfig `json:"checks"`
+	Tests                     []RelayURLTest     `json:"tests"`
+}
+
+// SyncResponse is returned by POST /api/v1/relays/{id}/sync.
+type SyncResponse struct {
+	ConfigUnchanged           bool               `json:"config_unchanged"`
+	ConfigETag                string             `json:"config_etag"`
+	ConfigPollIntervalSeconds int                `json:"config_poll_interval_seconds"`
+	Config                    *SyncConfigPayload `json:"config,omitempty"`
+}
+
+type SyncConfigPayload struct {
 	ConfigVersion int64              `json:"config_version"`
 	Checks        []RelayCheckConfig `json:"checks"`
 	Tests         []RelayURLTest     `json:"tests"`

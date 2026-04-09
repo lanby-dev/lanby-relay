@@ -20,47 +20,6 @@ import (
 	"time"
 )
 
-func TestEvaluateStateTransition_Hysteresis(t *testing.T) {
-	stateByMonitor := map[string]string{}
-	consecutiveFailures := map[string]int{}
-	consecutiveSuccesses := map[string]int{}
-	monitorID := "m1"
-
-	state, changed := evaluateStateTransition(monitorID, "fail", stateByMonitor, consecutiveFailures, consecutiveSuccesses)
-	if state != "degraded" || !changed {
-		t.Fatalf("first fail should transition to degraded, got state=%s changed=%v", state, changed)
-	}
-	state, _ = evaluateStateTransition(monitorID, "fail", stateByMonitor, consecutiveFailures, consecutiveSuccesses)
-	if state != "degraded" {
-		t.Fatalf("second fail should remain degraded, got %s", state)
-	}
-	state, _ = evaluateStateTransition(monitorID, "fail", stateByMonitor, consecutiveFailures, consecutiveSuccesses)
-	if state != "down" {
-		t.Fatalf("third fail should transition to down, got %s", state)
-	}
-
-	// One success from down should still be degraded due to recovery hysteresis.
-	state, _ = evaluateStateTransition(monitorID, "ok", stateByMonitor, consecutiveFailures, consecutiveSuccesses)
-	if state != "degraded" {
-		t.Fatalf("first recovery success from down should be degraded, got %s", state)
-	}
-	state, _ = evaluateStateTransition(monitorID, "ok", stateByMonitor, consecutiveFailures, consecutiveSuccesses)
-	if state != "up" {
-		t.Fatalf("second recovery success should be up, got %s", state)
-	}
-}
-
-func TestEvaluateStateTransition_DegradedCountsAsSuccess(t *testing.T) {
-	stateByMonitor := map[string]string{}
-	consecutiveFailures := map[string]int{}
-	consecutiveSuccesses := map[string]int{}
-
-	state, _ := evaluateStateTransition("m2", "degraded", stateByMonitor, consecutiveFailures, consecutiveSuccesses)
-	if state != "up" {
-		t.Fatalf("degraded status input should count as success signal, got %s", state)
-	}
-}
-
 func TestIsUnauthorized(t *testing.T) {
 	if isUnauthorized(nil) {
 		t.Fatal("nil error should not be unauthorized")
@@ -85,8 +44,8 @@ func TestExecuteCheck_HTTP(t *testing.T) {
 		Target:         okSrv.URL,
 		TimeoutSeconds: 2,
 	})
-	if res.Status != "ok" || res.State != "up" || res.StatusCode != http.StatusOK {
-		t.Fatalf("expected ok/up/200 result, got %+v", res)
+	if res.Status != "ok" || res.StatusCode != http.StatusOK {
+		t.Fatalf("expected ok/200 result, got %+v", res)
 	}
 
 	failSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -101,8 +60,8 @@ func TestExecuteCheck_HTTP(t *testing.T) {
 		ExpectedStatus: http.StatusOK,
 		TimeoutSeconds: 2,
 	})
-	if res.Status != "fail" || res.State != "down" {
-		t.Fatalf("expected fail/down result for status mismatch, got %+v", res)
+	if res.Status != "fail" {
+		t.Fatalf("expected fail result for status mismatch, got %+v", res)
 	}
 }
 
@@ -126,8 +85,8 @@ func TestExecuteCheck_HTTP_FollowRedirects(t *testing.T) {
 	if noFollow.StatusCode != http.StatusFound {
 		t.Fatalf("expected 302 without follow redirects, got status %d", noFollow.StatusCode)
 	}
-	if noFollow.Status != "fail" || noFollow.State != "down" {
-		t.Fatalf("expected fail/down for 302 when not following redirects, got %+v", noFollow)
+	if noFollow.Status != "fail" {
+		t.Fatalf("expected fail for 302 when not following redirects, got %+v", noFollow)
 	}
 
 	follow := executeCheck(RelayCheckConfig{
@@ -137,8 +96,8 @@ func TestExecuteCheck_HTTP_FollowRedirects(t *testing.T) {
 		FollowRedirects: true,
 		TimeoutSeconds:  3,
 	})
-	if follow.Status != "ok" || follow.State != "up" || follow.StatusCode != http.StatusOK {
-		t.Fatalf("expected ok/up/200 when following redirects, got %+v", follow)
+	if follow.Status != "ok" || follow.StatusCode != http.StatusOK {
+		t.Fatalf("expected ok/200 when following redirects, got %+v", follow)
 	}
 }
 
@@ -168,8 +127,8 @@ func TestExecuteCheck_DNS(t *testing.T) {
 		DNSType:        "A",
 		TimeoutSeconds: 3,
 	})
-	if res.Status != "ok" || res.State != "up" {
-		t.Fatalf("expected ok/up DNS result, got %+v", res)
+	if res.Status != "ok" {
+		t.Fatalf("expected ok DNS result, got %+v", res)
 	}
 }
 
@@ -210,15 +169,15 @@ func TestExecuteCheck_TCP(t *testing.T) {
 		Target:         ln.Addr().String(),
 		TimeoutSeconds: 2,
 	})
-	if res.Status != "ok" || res.State != "up" {
-		t.Fatalf("expected ok/up TCP result, got %+v", res)
+	if res.Status != "ok" {
+		t.Fatalf("expected ok TCP result, got %+v", res)
 	}
 }
 
 func TestExecuteCheck_UnsupportedType(t *testing.T) {
 	res := executeCheck(RelayCheckConfig{MonitorID: "m3", Type: "dns"})
-	if res.Status != "error" || res.State != "down" {
-		t.Fatalf("unsupported type should return error/down, got %+v", res)
+	if res.Status != "error" {
+		t.Fatalf("unsupported type should return error, got %+v", res)
 	}
 }
 
@@ -387,7 +346,7 @@ func TestExecuteCheck_HTTP_BodyContains(t *testing.T) {
 		HTTPBodyContains: "hello",
 		TimeoutSeconds:   2,
 	})
-	if res.Status != "ok" || res.State != "up" {
+	if res.Status != "ok" {
 		t.Fatalf("expected ok when body contains substring, got %+v", res)
 	}
 
@@ -398,7 +357,7 @@ func TestExecuteCheck_HTTP_BodyContains(t *testing.T) {
 		HTTPBodyContains: "goodbye",
 		TimeoutSeconds:   2,
 	})
-	if res.Status != "fail" || res.State != "down" {
+	if res.Status != "fail" {
 		t.Fatalf("expected fail when body missing substring, got %+v", res)
 	}
 }
@@ -416,7 +375,7 @@ func TestExecuteCheck_HTTP_SuccessStatusCodes(t *testing.T) {
 		SuccessHTTPStatusCodes: []int{202},
 		TimeoutSeconds:         2,
 	})
-	if res.Status != "ok" || res.State != "up" {
+	if res.Status != "ok" {
 		t.Fatalf("expected ok for 202 in success codes, got %+v", res)
 	}
 
@@ -427,7 +386,7 @@ func TestExecuteCheck_HTTP_SuccessStatusCodes(t *testing.T) {
 		SuccessHTTPStatusCodes: []int{200},
 		TimeoutSeconds:         2,
 	})
-	if res.Status != "fail" || res.State != "down" {
+	if res.Status != "fail" {
 		t.Fatalf("expected fail for 202 not in success codes, got %+v", res)
 	}
 }
@@ -490,7 +449,7 @@ func TestExecuteCheck_DNS_ExpectMatch(t *testing.T) {
 		DNSExpect:      "127",
 		TimeoutSeconds: 3,
 	})
-	if res.Status != "ok" || res.State != "up" {
+	if res.Status != "ok" {
 		t.Fatalf("expected ok when DNS expect matches, got %+v", res)
 	}
 }
@@ -504,7 +463,7 @@ func TestExecuteCheck_DNS_ExpectNoMatch(t *testing.T) {
 		DNSExpect:      "999.999.999.999",
 		TimeoutSeconds: 3,
 	})
-	if res.Status != "fail" || res.State != "down" {
+	if res.Status != "fail" {
 		t.Fatalf("expected fail when DNS expect does not match, got %+v", res)
 	}
 }
@@ -515,7 +474,7 @@ func TestExecuteCheck_DNS_MissingHost(t *testing.T) {
 		Type:           "dns",
 		TimeoutSeconds: 3,
 	})
-	if res.Status != "error" || res.State != "down" {
+	if res.Status != "error" {
 		t.Fatalf("expected error for missing dns_host, got %+v", res)
 	}
 }
@@ -528,7 +487,7 @@ func TestExecuteCheck_DNS_UnsupportedType(t *testing.T) {
 		DNSType:        "BOGUS",
 		TimeoutSeconds: 3,
 	})
-	if res.Status != "error" || res.State != "down" {
+	if res.Status != "error" {
 		t.Fatalf("expected error for unsupported DNS type, got %+v", res)
 	}
 }
@@ -540,8 +499,8 @@ func TestExecuteCheck_TCP_Unreachable(t *testing.T) {
 		Target:         "127.0.0.1:1",
 		TimeoutSeconds: 1,
 	})
-	if res.Status != "error" || res.State != "down" {
-		t.Fatalf("expected error/down for unreachable TCP, got %+v", res)
+	if res.Status != "error" {
+		t.Fatalf("expected error for unreachable TCP, got %+v", res)
 	}
 }
 

@@ -16,6 +16,8 @@ import (
 	"time"
 )
 
+const maxPendingProbeResults = 500
+
 type Runner struct {
 	log    *slog.Logger
 	cfg    Config
@@ -49,20 +51,24 @@ func (r *Runner) loadOrClaim(ctx context.Context) (Identity, error) {
 		return Identity{}, err
 	}
 	r.log.Info("relay waiting to be claimed", "claim_code", claim.ClaimCode, "expires_at", claim.ExpiresAt)
-	ticker := time.NewTicker(time.Duration(claim.PollIntervalSeconds) * time.Second)
-	defer ticker.Stop()
+
 	for {
-		select {
-		case <-ctx.Done():
-			return Identity{}, ctx.Err()
-		case <-ticker.C:
-			st, err := r.client.ClaimStatus(ctx, claim.RelayID)
-			if err != nil {
-				r.log.Warn("claim status failed", "error", err)
-				continue
+		st, err := r.client.ClaimStatus(ctx, claim.RelayID)
+		if err != nil {
+			r.log.Warn("claim status failed", "error", err)
+			select {
+			case <-ctx.Done():
+				return Identity{}, ctx.Err()
+			case <-time.After(800 * time.Millisecond):
 			}
-			if st.Status != "claimed" || st.RelaySecret == "" {
-				continue
+			continue
+		}
+		switch st.Status {
+		case "expired":
+			return Identity{}, fmt.Errorf("relay claim code expired before completion")
+		case "claimed":
+			if st.RelaySecret == "" {
+				return Identity{}, fmt.Errorf("claimed relay missing secret")
 			}
 			id := Identity{
 				RelayID:                   claim.RelayID,
@@ -76,8 +82,44 @@ func (r *Runner) loadOrClaim(ctx context.Context) (Identity, error) {
 			}
 			r.log.Info("relay claimed successfully", "relay_id", id.RelayID)
 			return id, nil
+		default:
+			// pending — server ended long-poll window; loop immediately for another wait
 		}
 	}
+}
+
+func probeSuccess(status string) bool {
+	return status == "ok" || status == "degraded"
+}
+
+func clampRelayPollSeconds(sec int) int {
+	if sec < 5 {
+		return 5
+	}
+	if sec > 600 {
+		return 600
+	}
+	return sec
+}
+
+func syncTickFromChecks(checks []RelayCheckConfig, fallback int) int {
+	if fallback <= 0 {
+		fallback = 15
+	}
+	if len(checks) == 0 {
+		return clampRelayPollSeconds(fallback)
+	}
+	minSec := int(^uint(0) >> 1)
+	for _, c := range checks {
+		sec := c.IntervalSeconds
+		if sec <= 0 {
+			sec = 30
+		}
+		if sec < minSec {
+			minSec = sec
+		}
+	}
+	return clampRelayPollSeconds(minSec)
 }
 
 func (r *Runner) runLoop(ctx context.Context, id Identity) error {
@@ -85,22 +127,89 @@ func (r *Runner) runLoop(ctx context.Context, id Identity) error {
 	if pollSeconds <= 0 {
 		pollSeconds = r.cfg.DefaultPollSeconds
 	}
-	configTicker := time.NewTicker(time.Duration(pollSeconds) * time.Second)
+	pollSeconds = clampRelayPollSeconds(pollSeconds)
+	syncTicker := time.NewTicker(time.Duration(pollSeconds) * time.Second)
 	probeTicker := time.NewTicker(1 * time.Second)
-	heartbeatTicker := time.NewTicker(60 * time.Second)
-	defer configTicker.Stop()
+	defer syncTicker.Stop()
 	defer probeTicker.Stop()
-	defer heartbeatTicker.Stop()
 
 	var (
-		etag                 string
-		mu                   sync.RWMutex
-		checks               []RelayCheckConfig
-		nextRuns             = map[string]time.Time{}
-		stateByMonitor       = map[string]string{}
-		consecutiveFailures  = map[string]int{}
-		consecutiveSuccesses = map[string]int{}
+		etag     string
+		mu       sync.RWMutex
+		checks   []RelayCheckConfig
+		nextRuns = map[string]time.Time{}
 	)
+
+	var bufMu sync.Mutex
+	pendingProbe := make([]ResultItem, 0, 32)
+	pendingTests := make([]RelayURLTestResult, 0, 8)
+	lastOutcome := map[string]string{}
+	highTouch := false
+
+	updateOutcomesAndHighTouch := func(batch []ResultItem, cur []RelayCheckConfig) {
+		bufMu.Lock()
+		defer bufMu.Unlock()
+		for _, res := range batch {
+			lastOutcome[res.MonitorID] = res.Status
+			if !probeSuccess(res.Status) {
+				highTouch = true
+			}
+		}
+		if !highTouch {
+			return
+		}
+		if len(cur) == 0 {
+			highTouch = false
+			return
+		}
+		allGreen := true
+		for _, c := range cur {
+			st, ok := lastOutcome[c.MonitorID]
+			if !ok || !probeSuccess(st) {
+				allGreen = false
+				break
+			}
+		}
+		if allGreen {
+			highTouch = false
+		}
+	}
+
+	resetSyncTicker := func() {
+		p := pollSeconds
+		if p <= 0 {
+			p = r.cfg.DefaultPollSeconds
+		}
+		p = clampRelayPollSeconds(p)
+		syncTicker.Reset(time.Duration(p) * time.Second)
+	}
+
+	persistSyncInterval := func() {
+		id.ConfigPollIntervalSeconds = pollSeconds
+		if err := r.saveIdentity(id); err != nil {
+			r.log.Warn("save identity after interval update failed", "error", err)
+		}
+	}
+
+	recomputePollFromChecks := func(cur []RelayCheckConfig, serverFallback int) {
+		next := syncTickFromChecks(cur, serverFallback)
+		if next != pollSeconds {
+			pollSeconds = next
+			resetSyncTicker()
+			persistSyncInterval()
+		}
+	}
+
+	appendPending := func(batch []ResultItem) {
+		bufMu.Lock()
+		pendingProbe = append(pendingProbe, batch...)
+		if len(pendingProbe) > maxPendingProbeResults {
+			pendingProbe = pendingProbe[len(pendingProbe)-maxPendingProbeResults:]
+		}
+		bufMu.Unlock()
+	}
+
+	var syncOnce func()
 
 	runDueChecks := func(now time.Time) {
 		mu.RLock()
@@ -128,19 +237,12 @@ func (r *Runner) runLoop(ctx context.Context, id Identity) error {
 				"interval_seconds", intervalSec,
 			)
 			res := executeCheck(c)
-			res.State, res.StateChanged = evaluateStateTransition(
-				c.MonitorID,
-				res.Status,
-				stateByMonitor,
-				consecutiveFailures,
-				consecutiveSuccesses,
-			)
+			res.State, res.StateChanged = "", false
 			r.log.Info("probe result",
 				"monitor_id", c.MonitorID,
 				"type", c.Type,
 				"target", c.Target,
 				"status", res.Status,
-				"state", res.State,
 				"duration_ms", res.DurationMs,
 				"status_code", res.StatusCode,
 				"error", res.Error,
@@ -150,28 +252,31 @@ func (r *Runner) runLoop(ctx context.Context, id Identity) error {
 		if len(results) == 0 {
 			return
 		}
-		if err := r.client.PushResults(ctx, id, results, r.cfg.RelayVersion); err != nil {
-			r.log.Warn("push results failed", "error", err)
+		updateOutcomesAndHighTouch(results, current)
+		appendPending(results)
+
+		bufMu.Lock()
+		doImmediate := highTouch
+		bufMu.Unlock()
+		if doImmediate {
+			syncOnce()
 		}
 	}
 
-	pollConfig := func() {
-		applyConfig := func(cfg *ConfigResponse, nextETag string) {
+	syncOnce = func() {
+		applyConfig := func(cfg *ConfigResponse, nextETag string, serverPollFallback int) {
+			recomputePollFromChecks(cfg.Checks, serverPollFallback)
 			updatedChecks := cfg.Checks
 			seen := map[string]struct{}{}
 			for _, c := range updatedChecks {
 				seen[c.MonitorID] = struct{}{}
 				if _, ok := nextRuns[c.MonitorID]; !ok {
-					// New checks run immediately on next probe tick.
 					nextRuns[c.MonitorID] = time.Now().UTC()
 				}
 			}
 			for monitorID := range nextRuns {
 				if _, ok := seen[monitorID]; !ok {
 					delete(nextRuns, monitorID)
-					delete(stateByMonitor, monitorID)
-					delete(consecutiveFailures, monitorID)
-					delete(consecutiveSuccesses, monitorID)
 				}
 			}
 			mu.Lock()
@@ -180,14 +285,34 @@ func (r *Runner) runLoop(ctx context.Context, id Identity) error {
 			etag = nextETag
 			if len(cfg.Tests) > 0 {
 				testResults := runRelayURLTests(cfg.Tests)
-				if err := r.client.SubmitTestResults(ctx, id, testResults); err != nil {
-					r.log.Warn("submit test results failed", "error", err)
-				}
+				bufMu.Lock()
+				pendingTests = append(pendingTests, testResults...)
+				bufMu.Unlock()
 			}
 		}
 
-		cfg, nextETag, notModified, err := r.client.GetConfig(ctx, id, etag)
+		var extra *SyncExtra
+		bufMu.Lock()
+		if len(pendingProbe) > 0 || len(pendingTests) > 0 {
+			ts := time.Now().UTC()
+			extra = &SyncExtra{
+				Results:        append([]ResultItem(nil), pendingProbe...),
+				RelayTimestamp: ts,
+				TestResults:    append([]RelayURLTestResult(nil), pendingTests...),
+			}
+			pendingProbe = pendingProbe[:0]
+			pendingTests = pendingTests[:0]
+		}
+		bufMu.Unlock()
+
+		resp, err := r.client.Sync(ctx, id, etag, r.cfg.RelayVersion, extra)
 		if err != nil {
+			if extra != nil {
+				bufMu.Lock()
+				pendingProbe = append(extra.Results, pendingProbe...)
+				pendingTests = append(extra.TestResults, pendingTests...)
+				bufMu.Unlock()
+			}
 			if isUnauthorized(err) {
 				r.log.Warn("relay credential rejected; deleting local identity and re-claiming", "error", err)
 				_ = os.Remove(r.cfg.IdentityPath)
@@ -198,98 +323,77 @@ func (r *Runner) runLoop(ctx context.Context, id Identity) error {
 				}
 				id = newID
 				etag = ""
-
-				newPoll := id.ConfigPollIntervalSeconds
-				if newPoll <= 0 {
-					newPoll = r.cfg.DefaultPollSeconds
+				pollSeconds = id.ConfigPollIntervalSeconds
+				if pollSeconds <= 0 {
+					pollSeconds = r.cfg.DefaultPollSeconds
 				}
-				if newPoll != pollSeconds {
-					pollSeconds = newPoll
-					configTicker.Reset(time.Duration(pollSeconds) * time.Second)
-				}
-
-				// Immediately fetch config for the newly claimed identity so probes
-				// do not wait for the next poll interval.
-				cfg, nextETag, notModified, err = r.client.GetConfig(ctx, id, "")
+				pollSeconds = clampRelayPollSeconds(pollSeconds)
+				resetSyncTicker()
+				resp, err = r.client.Sync(ctx, id, "", r.cfg.RelayVersion, extra)
 				if err != nil {
-					r.log.Warn("immediate config fetch after re-claim failed", "error", err)
+					r.log.Warn("immediate sync after re-claim failed", "error", err)
 					return
 				}
-				if !notModified && cfg != nil {
-					applyConfig(cfg, nextETag)
-				}
+			} else {
+				r.log.Warn("sync failed", "error", err)
 				return
 			}
-			r.log.Warn("config poll failed", "error", err)
-			return
 		}
-		if !notModified && cfg != nil {
-			applyConfig(cfg, nextETag)
+		serverFallback := resp.ConfigPollIntervalSeconds
+		if resp.ConfigPollIntervalSeconds > 0 && resp.ConfigPollIntervalSeconds != pollSeconds {
+			pollSeconds = clampRelayPollSeconds(resp.ConfigPollIntervalSeconds)
+			resetSyncTicker()
+			persistSyncInterval()
+		}
+		etag = resp.ConfigETag
+		if !resp.ConfigUnchanged && resp.Config != nil {
+			cfg := &ConfigResponse{
+				ConfigVersion:             resp.Config.ConfigVersion,
+				ConfigPollIntervalSeconds: resp.ConfigPollIntervalSeconds,
+				Checks:                    resp.Config.Checks,
+				Tests:                     resp.Config.Tests,
+			}
+			applyConfig(cfg, etag, serverFallback)
+			// Config just applied; URL tests may have appended pendingTests — sync again in-loop.
+			bufMu.Lock()
+			needFlush := len(pendingTests) > 0
+			bufMu.Unlock()
+			if needFlush {
+				syncOnce()
+			}
 		}
 	}
 
-	// Fetch immediately on startup instead of waiting for first ticker interval.
-	pollConfig()
+	syncOnce()
 
 	for {
 		select {
 		case <-ctx.Done():
+			flushCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			var extra *SyncExtra
+			bufMu.Lock()
+			if len(pendingProbe) > 0 || len(pendingTests) > 0 {
+				ts := time.Now().UTC()
+				extra = &SyncExtra{
+					Results:        append([]ResultItem(nil), pendingProbe...),
+					RelayTimestamp: ts,
+					TestResults:    append([]RelayURLTestResult(nil), pendingTests...),
+				}
+			}
+			bufMu.Unlock()
+			if extra != nil {
+				if _, err := r.client.Sync(flushCtx, id, etag, r.cfg.RelayVersion, extra); err != nil {
+					r.log.Warn("shutdown sync flush failed", "error", err)
+				}
+			}
+			cancel()
 			return nil
-		case <-configTicker.C:
-			pollConfig()
+		case <-syncTicker.C:
+			syncOnce()
 		case <-probeTicker.C:
 			runDueChecks(time.Now().UTC())
-		case <-heartbeatTicker.C:
-			if err := r.client.Heartbeat(ctx, id, r.cfg.RelayVersion); err != nil {
-				r.log.Warn("heartbeat failed", "error", err)
-			}
 		}
 	}
-}
-
-func evaluateStateTransition(
-	monitorID string,
-	status string,
-	stateByMonitor map[string]string,
-	consecutiveFailures map[string]int,
-	consecutiveSuccesses map[string]int,
-) (string, bool) {
-	prev := stateByMonitor[monitorID]
-	if prev == "" {
-		prev = "unknown"
-	}
-
-	isSuccess := status == "ok" || status == "degraded"
-	const (
-		downAfterFailures = 3
-		upAfterSuccesses  = 2
-	)
-
-	var next string
-	if isSuccess {
-		consecutiveSuccesses[monitorID]++
-		consecutiveFailures[monitorID] = 0
-		if prev == "down" {
-			if consecutiveSuccesses[monitorID] >= upAfterSuccesses {
-				next = "up"
-			} else {
-				next = "degraded"
-			}
-		} else {
-			next = "up"
-		}
-	} else {
-		consecutiveFailures[monitorID]++
-		consecutiveSuccesses[monitorID] = 0
-		if consecutiveFailures[monitorID] >= downAfterFailures {
-			next = "down"
-		} else {
-			next = "degraded"
-		}
-	}
-
-	stateByMonitor[monitorID] = next
-	return next, next != prev
 }
 
 func isUnauthorized(err error) bool {

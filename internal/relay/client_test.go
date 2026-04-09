@@ -75,22 +75,38 @@ func TestClient_RequestClaimAndClaimStatus(t *testing.T) {
 	}
 }
 
-func TestClient_GetConfig_WithETagAndNotModified(t *testing.T) {
-	var sawIfNoneMatch string
+func TestClient_Sync_WithConfigETag(t *testing.T) {
+	var lastBodyETag string
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/api/v1/relays/r1/config" {
+		if r.URL.Path != "/api/v1/relays/r1/sync" || r.Method != http.MethodPost {
 			http.NotFound(w, r)
 			return
 		}
-		sawIfNoneMatch = r.Header.Get("If-None-Match")
-		if sawIfNoneMatch == "v1" {
-			w.WriteHeader(http.StatusNotModified)
+		var req map[string]any
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			t.Fatalf("decode sync body: %v", err)
+		}
+		lastBodyETag = ""
+		if v, ok := req["config_etag"].(string); ok {
+			lastBodyETag = v
+		}
+		if lastBodyETag == "v1" {
+			_ = json.NewEncoder(w).Encode(SyncResponse{
+				ConfigUnchanged:           true,
+				ConfigETag:                "v1",
+				ConfigPollIntervalSeconds: 15,
+			})
 			return
 		}
 		w.Header().Set("ETag", "v1")
-		_ = json.NewEncoder(w).Encode(ConfigResponse{
-			ConfigVersion: 1,
-			Checks:        []RelayCheckConfig{{MonitorID: "m1", Type: "http", Target: "http://svc"}},
+		_ = json.NewEncoder(w).Encode(SyncResponse{
+			ConfigUnchanged:           false,
+			ConfigETag:                "v1",
+			ConfigPollIntervalSeconds: 15,
+			Config: &SyncConfigPayload{
+				ConfigVersion: 1,
+				Checks:        []RelayCheckConfig{{MonitorID: "m1", Type: "http", Target: "http://svc"}},
+			},
 		})
 	}))
 	defer srv.Close()
@@ -98,26 +114,23 @@ func TestClient_GetConfig_WithETagAndNotModified(t *testing.T) {
 	c := NewClient(srv.URL)
 	id := Identity{RelayID: "r1", RelaySecret: "secret"}
 
-	cfg, etag, notModified, err := c.GetConfig(context.Background(), id, "")
+	out, err := c.Sync(context.Background(), id, "", "1.0.0", nil)
 	if err != nil {
-		t.Fatalf("first get config: %v", err)
+		t.Fatalf("first sync: %v", err)
 	}
-	if notModified {
-		t.Fatalf("expected modified response on first fetch")
-	}
-	if etag != "v1" || cfg == nil || len(cfg.Checks) != 1 {
-		t.Fatalf("unexpected first config response: etag=%q cfg=%+v", etag, cfg)
+	if out.ConfigUnchanged || out.Config == nil || len(out.Config.Checks) != 1 {
+		t.Fatalf("unexpected first sync: %+v", out)
 	}
 
-	cfg, etag, notModified, err = c.GetConfig(context.Background(), id, "v1")
+	out, err = c.Sync(context.Background(), id, "v1", "1.0.0", nil)
 	if err != nil {
-		t.Fatalf("second get config: %v", err)
+		t.Fatalf("second sync: %v", err)
 	}
-	if !notModified || cfg != nil || etag != "v1" {
-		t.Fatalf("expected 304 behavior, got cfg=%v etag=%q notModified=%v", cfg, etag, notModified)
+	if !out.ConfigUnchanged || out.Config != nil {
+		t.Fatalf("expected unchanged second sync, got %+v", out)
 	}
-	if sawIfNoneMatch != "v1" {
-		t.Fatalf("expected If-None-Match header v1, got %q", sawIfNoneMatch)
+	if lastBodyETag != "v1" {
+		t.Fatalf("expected config_etag v1 in request body, last saw %q", lastBodyETag)
 	}
 }
 
@@ -128,7 +141,7 @@ func TestClient_doJSON_ErrorStatusIncludesPath(t *testing.T) {
 	defer srv.Close()
 
 	c := NewClient(srv.URL)
-	err := c.doJSON(context.Background(), http.MethodPost, "/test/path", "token", map[string]string{"x": "y"}, nil)
+	err := c.doJSON(context.Background(), c.http, http.MethodPost, "/test/path", "token", map[string]string{"x": "y"}, nil)
 	if err == nil {
 		t.Fatal("expected error for non-2xx status")
 	}

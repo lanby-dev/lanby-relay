@@ -14,7 +14,7 @@ type Config struct {
 }
 
 func LoadConfigFromEnv() Config {
-	poll := 30
+	poll := 15
 	if v := os.Getenv("CONFIG_POLL_SECONDS"); v != "" {
 		if n, err := strconv.Atoi(v); err == nil && n > 0 {
 			poll = n
