@@ -8,6 +8,7 @@ import (
 	"crypto/x509/pkix"
 	"encoding/pem"
 	"io"
+	"log"
 	"log/slog"
 	"math/big"
 	"net"
@@ -212,6 +213,7 @@ func TestRunRelayURLTests_IgnoreTLSErrors(t *testing.T) {
 		// Cert is valid for example.test only; client dials 127.0.0.1 — verification fails unless skipped.
 		Certificates: []tls.Certificate{mustServerCert(t, []string{"example.test"})},
 	}
+	srv.Config.ErrorLog = log.New(io.Discard, "", 0)
 	srv.StartTLS()
 	defer srv.Close()
 

@@ -18,8 +18,9 @@ func TestLoadConfigFromEnv_Defaults(t *testing.T) {
 	if cfg.PlatformURL != "https://api.lanby.dev" {
 		t.Fatalf("expected default platform URL, got %q", cfg.PlatformURL)
 	}
-	if cfg.RelayVersion != "0.1.0" {
-		t.Fatalf("expected default relay version, got %q", cfg.RelayVersion)
+	// Unset AGENT_VERSION falls back to the linker-settable Version (see version.go).
+	if cfg.RelayVersion != Version {
+		t.Fatalf("expected RelayVersion == Version (%q), got %q", Version, cfg.RelayVersion)
 	}
 }
 
