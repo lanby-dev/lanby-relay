@@ -30,7 +30,7 @@ func LoadConfigFromEnv() Config {
 	}
 	ver := os.Getenv("AGENT_VERSION")
 	if ver == "" {
-		ver = "0.1.0"
+		ver = Version
 	}
 	return Config{
 		PlatformURL:        url,

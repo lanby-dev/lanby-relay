@@ -3,6 +3,10 @@ BIN_DIR  := bin
 CMD_DIR  := ./cmd/relay
 GOLANGCI_LINT_VERSION ?= v2.11.4
 
+VERSION     ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo "dev")
+VERSION_PKG  = github.com/lanby-dev/lanby-relay/internal/relay
+LDFLAGS      = -X $(VERSION_PKG).Version=$(VERSION)
+
 .PHONY: help build run test vet lint fmt fmt-check tidy clean check ci install dev
 
 ## Show this help
@@ -31,15 +35,15 @@ help:
 ## Build binary to bin/relay
 build:
 	@mkdir -p $(BIN_DIR)
-	go build -o $(BIN_DIR)/relay $(CMD_DIR)
+	go build -ldflags "$(LDFLAGS)" -o $(BIN_DIR)/relay $(CMD_DIR)
 
 ## Run the relay from source
 run:
-	go run $(CMD_DIR)
+	go run -ldflags "$(LDFLAGS)" $(CMD_DIR)
 
 ## Install binary into GOPATH/bin
 install:
-	go install $(CMD_DIR)
+	go install -ldflags "$(LDFLAGS)" $(CMD_DIR)
 
 ## Run all Go tests
 test:

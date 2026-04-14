@@ -10,10 +10,13 @@ RUN --mount=type=cache,target=/go/pkg/mod \
     go mod download
 
 COPY . .
+ARG VERSION=dev
 RUN --mount=type=cache,target=/go/pkg/mod \
     --mount=type=cache,target=/root/.cache/go-build \
     CGO_ENABLED=0 GOOS=linux \
-    go build -trimpath -ldflags="-s -w" -o /bin/relay ./cmd/relay
+    go build -trimpath \
+    -ldflags="-s -w -X github.com/lanby-dev/lanby-relay/internal/relay.Version=${VERSION}" \
+    -o /bin/relay ./cmd/relay
 
 FROM alpine:3.20 AS ca-bundle
 RUN apk add --no-cache ca-certificates
