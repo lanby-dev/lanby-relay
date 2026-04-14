@@ -3,11 +3,16 @@ BIN_DIR  := bin
 CMD_DIR  := ./cmd/relay
 GOLANGCI_LINT_VERSION ?= v2.11.4
 
-VERSION     ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo "dev")
+# Embed commit for local make targets (build/run/install). Docker image builds use Dockerfile ARG VERSION instead.
+GIT_REV := $(shell git rev-parse --short=12 HEAD 2>/dev/null)
+VERSION ?= $(if $(GIT_REV),$(GIT_REV)$(shell test -n "$$(git status --porcelain 2>/dev/null)" && echo -dirty),dev)
 VERSION_PKG  = github.com/lanby-dev/lanby-relay/internal/relay
 LDFLAGS      = -X $(VERSION_PKG).Version=$(VERSION)
 
-.PHONY: help build run test vet lint fmt fmt-check tidy clean check ci install dev
+# make run-local: Lanby Tilt forwards api to host :8080 (see lanby Tiltfile).
+LOCAL_PLATFORM_URL ?= http://localhost:8080
+
+.PHONY: help build run run-local test vet lint fmt fmt-check tidy clean check ci install dev
 
 ## Show this help
 help:
@@ -15,7 +20,8 @@ help:
 	@echo ""
 	@echo "Build & Run:"
 	@echo "  make build      Build binary to bin/relay"
-	@echo "  make run        Run relay from source"
+	@echo "  make run        Run relay from source (default API: https://api.lanby.dev)"
+	@echo "  make run-local  Run against local Lanby ($(LOCAL_PLATFORM_URL); override LOCAL_PLATFORM_URL=…)"
 	@echo "  make install    Install relay binary to GOPATH/bin"
 	@echo "  make dev        Run via helper script with local defaults"
 	@echo ""
@@ -37,9 +43,13 @@ build:
 	@mkdir -p $(BIN_DIR)
 	go build -ldflags "$(LDFLAGS)" -o $(BIN_DIR)/relay $(CMD_DIR)
 
-## Run the relay from source
+## Run the relay from source (uses https://api.lanby.dev unless PLATFORM_URL is set in your environment)
 run:
 	go run -ldflags "$(LDFLAGS)" $(CMD_DIR)
+
+## Run the relay pointed at local Lanby (Tilt api port-forward)
+run-local:
+	PLATFORM_URL='$(LOCAL_PLATFORM_URL)' go run -ldflags "$(LDFLAGS)" $(CMD_DIR)
 
 ## Install binary into GOPATH/bin
 install:

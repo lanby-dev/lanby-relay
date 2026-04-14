@@ -74,12 +74,24 @@ jobs:
       - name: Build and push
         run: |
           TAG=${{ github.ref_name }}
+          # Embed Git tag in relay binary (internal/relay.Version) and OCI label (see Dockerfile ARG VERSION).
           docker buildx build \
             --platform linux/amd64,linux/arm64 \
-            --build-arg VERSION=$TAG \
+            --build-arg "VERSION=${TAG}" \
             --tag ghcr.io/lanby-dev/lanby-relay:$TAG \
             --tag ghcr.io/lanby-dev/lanby-relay:latest \
             --cache-from type=gha \
             --cache-to type=gha,mode=max \
             --push \
             .
+
+      - name: Verify image reports release version
+        run: |
+          TAG=${{ github.ref_name }}
+          docker pull "ghcr.io/lanby-dev/lanby-relay:${TAG}"
+          got=$(docker inspect --format '{{index .Config.Labels "org.opencontainers.image.version"}}' "ghcr.io/lanby-dev/lanby-relay:${TAG}")
+          if [ "$got" != "$TAG" ]; then
+            echo "Expected org.opencontainers.image.version=${TAG}, got ${got:-<empty>}"
+            exit 1
+          fi
+          echo "OK: image label version=${got}"

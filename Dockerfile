@@ -10,6 +10,8 @@ RUN --mount=type=cache,target=/go/pkg/mod \
     go mod download
 
 COPY . .
+# Release images: pass the Git tag, e.g. `docker buildx build --build-arg VERSION=v1.2.3 ...`
+# (GitHub Actions sets this from github.ref_name.) Local builds omit it → default "dev".
 ARG VERSION=dev
 RUN --mount=type=cache,target=/go/pkg/mod \
     --mount=type=cache,target=/root/.cache/go-build \
@@ -22,6 +24,9 @@ FROM alpine:3.20 AS ca-bundle
 RUN apk add --no-cache ca-certificates
 
 FROM scratch
+
+ARG VERSION=dev
+LABEL org.opencontainers.image.version="${VERSION}"
 
 COPY --from=ca-bundle /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/ca-certificates.crt
 COPY --from=builder /bin/relay /bin/relay
