@@ -143,7 +143,7 @@ func (r *Runner) runLoop(ctx context.Context, id Identity) error {
 	var bufMu sync.Mutex
 	pendingProbe := make([]ResultItem, 0, 32)
 	pendingTests := make([]RelayURLTestResult, 0, 8)
-	lastOutcome    := map[string]string{}
+	lastOutcome := map[string]string{}
 	stateByMonitor := map[string]string{}
 	highTouch := false
 

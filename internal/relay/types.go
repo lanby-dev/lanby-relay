@@ -31,28 +31,28 @@ type ClaimStatusResponse struct {
 }
 
 type RelayCheckConfig struct {
-	MonitorID              string            `json:"monitor_id"`
-	Name                   string            `json:"name"`
-	Type                   string            `json:"type"`
-	Target                 string            `json:"target"`
-	IntervalSeconds        int               `json:"interval_seconds"`
-	TimeoutSeconds         int               `json:"timeout_seconds"`
-	Method                 string            `json:"method,omitempty"`
-	ExpectedStatus         int               `json:"expected_status,omitempty"`
-	SuccessHTTPStatusCodes []int             `json:"success_http_status_codes,omitempty"`
-	HTTPBodyContains       string            `json:"http_body_contains,omitempty"`
-	CheckCertExpiry        bool              `json:"check_cert_expiry,omitempty"`
-	CertExpiryMinDays      int               `json:"cert_expiry_min_days,omitempty"`
-	IgnoreTLSErrors        bool              `json:"ignore_tls_errors,omitempty"`
-	FollowRedirects        bool              `json:"follow_redirects,omitempty"`
-	MaxRedirects           int               `json:"max_redirects,omitempty"`
-	Headers                map[string]string `json:"headers,omitempty"`
-	DNSHost                string            `json:"dns_host,omitempty"`
-	DNSType                string            `json:"dns_type,omitempty"`
-	DNSExpect              string            `json:"dns_expect,omitempty"`
-	DNSNameserver          string            `json:"dns_nameserver,omitempty"`
-	GRPCService            string            `json:"grpc_service,omitempty"`
-	GRPTLS                 bool              `json:"grpc_tls,omitempty"`
+	MonitorID               string            `json:"monitor_id"`
+	Name                    string            `json:"name"`
+	Type                    string            `json:"type"`
+	Target                  string            `json:"target"`
+	IntervalSeconds         int               `json:"interval_seconds"`
+	TimeoutSeconds          int               `json:"timeout_seconds"`
+	Method                  string            `json:"method,omitempty"`
+	ExpectedStatus          int               `json:"expected_status,omitempty"`
+	SuccessHTTPStatusCodes  []int             `json:"success_http_status_codes,omitempty"`
+	HTTPBodyContains        string            `json:"http_body_contains,omitempty"`
+	CheckCertExpiry         bool              `json:"check_cert_expiry,omitempty"`
+	CertExpiryMinDays       int               `json:"cert_expiry_min_days,omitempty"`
+	IgnoreTLSErrors         bool              `json:"ignore_tls_errors,omitempty"`
+	FollowRedirects         bool              `json:"follow_redirects,omitempty"`
+	MaxRedirects            int               `json:"max_redirects,omitempty"`
+	Headers                 map[string]string `json:"headers,omitempty"`
+	DNSHost                 string            `json:"dns_host,omitempty"`
+	DNSType                 string            `json:"dns_type,omitempty"`
+	DNSExpect               string            `json:"dns_expect,omitempty"`
+	DNSNameserver           string            `json:"dns_nameserver,omitempty"`
+	GRPCService             string            `json:"grpc_service,omitempty"`
+	GRPTLS                  bool              `json:"grpc_tls,omitempty"`
 	Retries                 int               `json:"retries,omitempty"`
 	RecoverySuccesses       int               `json:"recovery_successes,omitempty"`
 	SlowThresholdMs         int               `json:"slow_threshold_ms,omitempty"`
