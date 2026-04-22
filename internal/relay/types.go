@@ -53,9 +53,10 @@ type RelayCheckConfig struct {
 	DNSNameserver          string            `json:"dns_nameserver,omitempty"`
 	GRPCService            string            `json:"grpc_service,omitempty"`
 	GRPTLS                 bool              `json:"grpc_tls,omitempty"`
-	Retries                int               `json:"retries,omitempty"`
-	RecoverySuccesses      int               `json:"recovery_successes,omitempty"`
-	SlowThresholdMs        int               `json:"slow_threshold_ms,omitempty"`
+	Retries                 int               `json:"retries,omitempty"`
+	RecoverySuccesses       int               `json:"recovery_successes,omitempty"`
+	SlowThresholdMs         int               `json:"slow_threshold_ms,omitempty"`
+	RecoveryIntervalSeconds int               `json:"recovery_interval_seconds,omitempty"`
 }
 
 type ConfigResponse struct {
@@ -71,6 +72,9 @@ type SyncResponse struct {
 	ConfigETag                string             `json:"config_etag"`
 	ConfigPollIntervalSeconds int                `json:"config_poll_interval_seconds"`
 	Config                    *SyncConfigPayload `json:"config,omitempty"`
+	// CheckStates maps monitor IDs to their current state ("up", "down", "degraded", "unknown").
+	// Always returned regardless of config caching; used to drive recovery interval switching.
+	CheckStates map[string]string `json:"check_states,omitempty"`
 }
 
 type SyncConfigPayload struct {

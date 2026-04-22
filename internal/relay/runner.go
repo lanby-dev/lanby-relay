@@ -143,7 +143,8 @@ func (r *Runner) runLoop(ctx context.Context, id Identity) error {
 	var bufMu sync.Mutex
 	pendingProbe := make([]ResultItem, 0, 32)
 	pendingTests := make([]RelayURLTestResult, 0, 8)
-	lastOutcome := map[string]string{}
+	lastOutcome    := map[string]string{}
+	stateByMonitor := map[string]string{}
 	highTouch := false
 
 	updateOutcomesAndHighTouch := func(batch []ResultItem, cur []RelayCheckConfig) {
@@ -228,9 +229,26 @@ func (r *Runner) runLoop(ctx context.Context, id Identity) error {
 			if intervalSec <= 0 {
 				intervalSec = 30
 			}
+			// Switch to recovery interval when the server-reported state is down/degraded.
+			// Uses stateByMonitor (updated from check_states on every sync) so the trigger
+			// matches platform behaviour: both paths use monitor DB state, not raw outcomes.
+			if c.RecoveryIntervalSeconds > 0 {
+				st := stateByMonitor[c.MonitorID]
+				if st == "down" || st == "degraded" {
+					intervalSec = c.RecoveryIntervalSeconds
+				}
+			}
 			nextRuns[c.MonitorID] = now.Add(time.Duration(intervalSec) * time.Second)
 
-			r.log.Info("running probe",
+			if !r.cfg.AllowedProbeHosts.Allowed(c.Target) {
+				r.log.Warn("probe target blocked by ALLOWED_PROBE_HOSTS",
+					"monitor_id", c.MonitorID,
+					"target", c.Target,
+				)
+				continue
+			}
+
+			r.log.Debug("running probe",
 				"monitor_id", c.MonitorID,
 				"type", c.Type,
 				"target", c.Target,
@@ -238,15 +256,23 @@ func (r *Runner) runLoop(ctx context.Context, id Identity) error {
 			)
 			res := executeCheck(c)
 			res.State, res.StateChanged = "", false
-			r.log.Info("probe result",
-				"monitor_id", c.MonitorID,
-				"type", c.Type,
-				"target", c.Target,
-				"status", res.Status,
-				"duration_ms", res.DurationMs,
-				"status_code", res.StatusCode,
-				"error", res.Error,
-			)
+			if probeSuccess(res.Status) {
+				r.log.Debug("probe result",
+					"monitor_id", c.MonitorID,
+					"status", res.Status,
+					"duration_ms", res.DurationMs,
+				)
+			} else {
+				r.log.Warn("probe result",
+					"monitor_id", c.MonitorID,
+					"type", c.Type,
+					"target", c.Target,
+					"status", res.Status,
+					"duration_ms", res.DurationMs,
+					"status_code", res.StatusCode,
+					"error", res.Error,
+				)
+			}
 			results = append(results, res)
 		}
 		if len(results) == 0 {
@@ -346,6 +372,33 @@ func (r *Runner) runLoop(ctx context.Context, id Identity) error {
 			persistSyncInterval()
 		}
 		etag = resp.ConfigETag
+
+		// Apply server-reported states. On down/degraded transition, reset nextRuns
+		// so the next probeTicker tick triggers an immediate re-check — matching
+		// the platform's behaviour of adjusting the Temporal Schedule immediately.
+		for monitorID, newState := range resp.CheckStates {
+			prev := stateByMonitor[monitorID]
+			stateByMonitor[monitorID] = newState
+			if prev != newState && (newState == "down" || newState == "degraded") {
+				nextRuns[monitorID] = time.Time{}
+			}
+		}
+		// Remove states for monitors no longer in this relay's check list.
+		if len(resp.CheckStates) > 0 {
+			mu.RLock()
+			cur := checks
+			mu.RUnlock()
+			seen := make(map[string]struct{}, len(cur))
+			for _, c := range cur {
+				seen[c.MonitorID] = struct{}{}
+			}
+			for id := range stateByMonitor {
+				if _, ok := seen[id]; !ok {
+					delete(stateByMonitor, id)
+				}
+			}
+		}
+
 		if !resp.ConfigUnchanged && resp.Config != nil {
 			cfg := &ConfigResponse{
 				ConfigVersion:             resp.Config.ConfigVersion,

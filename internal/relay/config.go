@@ -1,6 +1,7 @@
 package relay
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -11,9 +12,10 @@ type Config struct {
 	IdentityPath       string
 	RelayVersion       string
 	DefaultPollSeconds int
+	AllowedProbeHosts  AllowList
 }
 
-func LoadConfigFromEnv() Config {
+func LoadConfigFromEnv() (Config, error) {
 	poll := 15
 	if v := os.Getenv("CONFIG_POLL_SECONDS"); v != "" {
 		if n, err := strconv.Atoi(v); err == nil && n > 0 {
@@ -32,10 +34,15 @@ func LoadConfigFromEnv() Config {
 	if ver == "" {
 		ver = Version
 	}
+	allowList, err := ParseAllowList(os.Getenv("ALLOWED_PROBE_HOSTS"))
+	if err != nil {
+		return Config{}, fmt.Errorf("ALLOWED_PROBE_HOSTS: %w", err)
+	}
 	return Config{
 		PlatformURL:        url,
 		IdentityPath:       idPath,
 		RelayVersion:       ver,
 		DefaultPollSeconds: poll,
-	}
+		AllowedProbeHosts:  allowList,
+	}, nil
 }

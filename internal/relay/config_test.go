@@ -7,8 +7,12 @@ func TestLoadConfigFromEnv_Defaults(t *testing.T) {
 	t.Setenv("IDENTITY_PATH", "")
 	t.Setenv("PLATFORM_URL", "")
 	t.Setenv("AGENT_VERSION", "")
+	t.Setenv("ALLOWED_PROBE_HOSTS", "")
 
-	cfg := LoadConfigFromEnv()
+	cfg, err := LoadConfigFromEnv()
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
 	if cfg.DefaultPollSeconds != 15 {
 		t.Fatalf("expected default poll 15, got %d", cfg.DefaultPollSeconds)
 	}
@@ -29,8 +33,12 @@ func TestLoadConfigFromEnv_OverridesAndInvalidPoll(t *testing.T) {
 	t.Setenv("IDENTITY_PATH", "/tmp/custom-identity.json")
 	t.Setenv("PLATFORM_URL", "https://platform.example.com")
 	t.Setenv("AGENT_VERSION", "1.2.3")
+	t.Setenv("ALLOWED_PROBE_HOSTS", "")
 
-	cfg := LoadConfigFromEnv()
+	cfg, err := LoadConfigFromEnv()
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
 	if cfg.DefaultPollSeconds != 45 {
 		t.Fatalf("expected poll 45, got %d", cfg.DefaultPollSeconds)
 	}
@@ -45,8 +53,36 @@ func TestLoadConfigFromEnv_OverridesAndInvalidPoll(t *testing.T) {
 	}
 
 	t.Setenv("CONFIG_POLL_SECONDS", "not-a-number")
-	cfg = LoadConfigFromEnv()
+	cfg, err = LoadConfigFromEnv()
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
 	if cfg.DefaultPollSeconds != 15 {
 		t.Fatalf("expected fallback poll 15 for invalid value, got %d", cfg.DefaultPollSeconds)
+	}
+}
+
+func TestLoadConfigFromEnv_InvalidAllowedProbeHosts(t *testing.T) {
+	t.Setenv("ALLOWED_PROBE_HOSTS", "not-a-cidr/99")
+	_, err := LoadConfigFromEnv()
+	if err == nil {
+		t.Fatal("expected error for invalid ALLOWED_PROBE_HOSTS")
+	}
+}
+
+func TestLoadConfigFromEnv_AllowedProbeHosts(t *testing.T) {
+	t.Setenv("ALLOWED_PROBE_HOSTS", "*.local,192.168.0.0/16")
+	cfg, err := LoadConfigFromEnv()
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if cfg.AllowedProbeHosts.Empty() {
+		t.Fatal("expected non-empty allowlist")
+	}
+	if !cfg.AllowedProbeHosts.Allowed("http://mynas.local/") {
+		t.Error("expected mynas.local to be allowed")
+	}
+	if cfg.AllowedProbeHosts.Allowed("http://other.example.com/") {
+		t.Error("expected other.example.com to be blocked")
 	}
 }

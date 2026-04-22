@@ -13,7 +13,11 @@ import (
 
 func main() {
 	log := slog.New(slog.NewJSONHandler(os.Stdout, nil))
-	cfg := relay.LoadConfigFromEnv()
+	cfg, err := relay.LoadConfigFromEnv()
+	if err != nil {
+		log.Error("invalid configuration", "error", err)
+		os.Exit(1)
+	}
 	client := relay.NewClient(cfg.PlatformURL)
 
 	runner := relay.NewRunner(log, cfg, client)

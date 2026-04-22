@@ -49,6 +49,28 @@ All configuration is via environment variables. Defaults work for most deploymen
 | `IDENTITY_PATH` | `./identity.json` | Path to persist relay identity |
 | `AGENT_VERSION` | `0.1.0` | Version string reported to the platform |
 | `CONFIG_POLL_SECONDS` | `30` | How often to poll for config changes |
+| `ALLOWED_PROBE_HOSTS` | *(unset — all hosts permitted)* | Comma-separated allowlist of hosts the relay may probe. See below. |
+
+### ALLOWED_PROBE_HOSTS
+
+When set, the relay only executes probes whose target matches at least one entry. Targets that don't match are skipped and logged as a warning. If unset, all targets are permitted.
+
+Supported pattern forms:
+
+| Pattern | Example | Matches |
+|---|---|---|
+| Exact hostname or IP | `mynas.local` | `mynas.local` only |
+| Wildcard subdomain | `*.home.arpa` | `foo.home.arpa`, not `home.arpa` itself |
+| CIDR block | `192.168.0.0/16` | IP-literal targets in that range |
+
+Multiple patterns are comma-separated:
+
+```yaml
+environment:
+  ALLOWED_PROBE_HOSTS: "*.local,*.home.arpa,192.168.0.0/16,10.0.0.0/8"
+```
+
+The relay refuses to start if any entry is malformed (e.g. an invalid CIDR). CIDRs match only IP-literal targets — use hostname patterns for named hosts.
 
 ## Supported check types
 
