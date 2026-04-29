@@ -149,30 +149,36 @@ func (r *Runner) runLoop(ctx context.Context, id Identity) error {
 
 	updateOutcomesAndHighTouch := func(batch []ResultItem, cur []RelayCheckConfig) {
 		bufMu.Lock()
-		defer bufMu.Unlock()
+		prev := highTouch
 		for _, res := range batch {
 			lastOutcome[res.MonitorID] = res.Status
 			if !probeSuccess(res.Status) {
 				highTouch = true
 			}
 		}
-		if !highTouch {
-			return
-		}
-		if len(cur) == 0 {
-			highTouch = false
-			return
-		}
-		allGreen := true
-		for _, c := range cur {
-			st, ok := lastOutcome[c.MonitorID]
-			if !ok || !probeSuccess(st) {
-				allGreen = false
-				break
+		if highTouch {
+			if len(cur) == 0 {
+				highTouch = false
+			} else {
+				allGreen := true
+				for _, c := range cur {
+					if st, ok := lastOutcome[c.MonitorID]; !ok || !probeSuccess(st) {
+						allGreen = false
+						break
+					}
+				}
+				if allGreen {
+					highTouch = false
+				}
 			}
 		}
-		if allGreen {
-			highTouch = false
+		entered := !prev && highTouch
+		exited := prev && !highTouch
+		bufMu.Unlock()
+		if entered {
+			r.log.Info("relay entering high-touch mode: one or more monitors are unhealthy")
+		} else if exited {
+			r.log.Info("relay returning to normal: all monitors healthy")
 		}
 	}
 
@@ -309,6 +315,7 @@ func (r *Runner) runLoop(ctx context.Context, id Identity) error {
 			checks = updatedChecks
 			mu.Unlock()
 			etag = nextETag
+			r.log.Info("relay config updated", "monitors", len(updatedChecks))
 			if len(cfg.Tests) > 0 {
 				testResults := runRelayURLTests(cfg.Tests)
 				bufMu.Lock()
@@ -417,6 +424,11 @@ func (r *Runner) runLoop(ctx context.Context, id Identity) error {
 		}
 	}
 
+	r.log.Info("relay starting",
+		"relay_id", id.RelayID,
+		"platform_url", r.cfg.PlatformURL,
+		"poll_interval_seconds", pollSeconds,
+	)
 	syncOnce()
 
 	for {
