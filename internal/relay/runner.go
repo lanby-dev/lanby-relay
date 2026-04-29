@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"reflect"
 	"runtime"
 	"strings"
 	"sync"
@@ -312,10 +313,13 @@ func (r *Runner) runLoop(ctx context.Context, id Identity) error {
 				}
 			}
 			mu.Lock()
+			changed := !sameCheckConfigs(checks, updatedChecks)
 			checks = updatedChecks
 			mu.Unlock()
 			etag = nextETag
-			r.log.Info("relay config updated", "monitors", len(updatedChecks))
+			if changed {
+				r.log.Info("relay config updated", "monitors", len(updatedChecks))
+			}
 			if len(cfg.Tests) > 0 {
 				testResults := runRelayURLTests(cfg.Tests)
 				bufMu.Lock()
@@ -512,6 +516,26 @@ func runRelayURLTests(tests []RelayURLTest) []RelayURLTestResult {
 		})
 	}
 	return out
+}
+
+// sameCheckConfigs reports whether a and b contain the same monitor configurations.
+// Order-independent; uses reflect.DeepEqual per entry so all fields (including
+// headers maps and slices) are compared correctly.
+func sameCheckConfigs(a, b []RelayCheckConfig) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	aByID := make(map[string]RelayCheckConfig, len(a))
+	for _, c := range a {
+		aByID[c.MonitorID] = c
+	}
+	for _, bc := range b {
+		ac, ok := aByID[bc.MonitorID]
+		if !ok || !reflect.DeepEqual(ac, bc) {
+			return false
+		}
+	}
+	return true
 }
 
 func (r *Runner) loadIdentity() (Identity, error) {
