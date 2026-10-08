@@ -581,7 +581,7 @@ func TestExecuteCheck_HTTP_DoesNotLeakConnections(t *testing.T) {
 	defer srv.Close()
 
 	for i := 0; i < 20; i++ {
-		res := executeCheck(RelayCheckConfig{MonitorID: "m1", Type: "http", Target: srv.URL, TimeoutSeconds: 2})
+		res := executeCheck(RelayCheckConfig{MonitorID: "m1", Type: "http", Target: srv.URL, TimeoutSeconds: 2}, AllowList{})
 		if res.Status != "ok" {
 			t.Fatalf("check %d: expected ok, got %+v", i, res)
 		}
@@ -603,7 +603,7 @@ func TestRunRelayURLTests_IgnoreTLSErrors_DoesNotLeakConnections(t *testing.T) {
 	for i := range tests {
 		tests[i] = RelayURLTest{ID: "t", URL: srv.URL, IgnoreTLSErrors: true}
 	}
-	for _, r := range runRelayURLTests(tests) {
+	for _, r := range runRelayURLTests(tests, AllowList{}) {
 		if !r.Reachable {
 			t.Fatalf("expected reachable, got %+v", r)
 		}
