@@ -490,8 +490,10 @@ func runRelayURLTests(tests []RelayURLTest) []RelayURLTestResult {
 			CheckRedirect: redirectPolicy,
 		}
 		if t.IgnoreTLSErrors {
+			// Per-test Transport is never reused, so keep-alive would leak idle connections.
 			client.Transport = &http.Transport{
-				TLSClientConfig: &tls.Config{InsecureSkipVerify: true}, //nolint:gosec
+				TLSClientConfig:   &tls.Config{InsecureSkipVerify: true}, //nolint:gosec
+				DisableKeepAlives: true,
 			}
 		}
 		start := time.Now()

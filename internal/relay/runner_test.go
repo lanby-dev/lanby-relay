@@ -17,6 +17,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 )
@@ -533,3 +534,82 @@ func mustCertWithDates(t *testing.T, notBefore, notAfter time.Time) *x509.Certif
 type assertErr string
 
 func (e assertErr) Error() string { return string(e) }
+
+// openConnTracker counts server-side connections that are still open.
+type openConnTracker struct {
+	mu   sync.Mutex
+	open map[net.Conn]struct{}
+}
+
+func (o *openConnTracker) track(c net.Conn, s http.ConnState) {
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	switch s {
+	case http.StateNew:
+		if o.open == nil {
+			o.open = map[net.Conn]struct{}{}
+		}
+		o.open[c] = struct{}{}
+	case http.StateClosed, http.StateHijacked:
+		delete(o.open, c)
+	}
+}
+
+func (o *openConnTracker) count() int {
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	return len(o.open)
+}
+
+// waitNoOpenConns polls because the server observes the close asynchronously.
+func waitNoOpenConns(t *testing.T, o *openConnTracker) {
+	t.Helper()
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		if o.count() == 0 {
+			return
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	t.Fatalf("expected all connections closed after checks finished, %d still open (idle keep-alive leak)", o.count())
+}
+
+func TestExecuteCheck_HTTP_DoesNotLeakConnections(t *testing.T) {
+	var tracker openConnTracker
+	srv := httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte("ok")) // small body: client reads to EOF, connection would go idle
+	}))
+	srv.Config.ConnState = tracker.track
+	srv.Start()
+	defer srv.Close()
+
+	for i := 0; i < 20; i++ {
+		res := executeCheck(RelayCheckConfig{MonitorID: "m1", Type: "http", Target: srv.URL, TimeoutSeconds: 2})
+		if res.Status != "ok" {
+			t.Fatalf("check %d: expected ok, got %+v", i, res)
+		}
+	}
+	waitNoOpenConns(t, &tracker)
+}
+
+func TestRunRelayURLTests_IgnoreTLSErrors_DoesNotLeakConnections(t *testing.T) {
+	var tracker openConnTracker
+	srv := httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte("ok"))
+	}))
+	srv.Config.ConnState = tracker.track
+	srv.TLS = &tls.Config{Certificates: []tls.Certificate{mustServerCert(t, []string{"example.test"})}}
+	srv.StartTLS()
+	defer srv.Close()
+
+	tests := make([]RelayURLTest, 20)
+	for i := range tests {
+		tests[i] = RelayURLTest{ID: "t", URL: srv.URL, IgnoreTLSErrors: true}
+	}
+	for _, r := range runRelayURLTests(tests) {
+		if !r.Reachable {
+			t.Fatalf("expected reachable, got %+v", r)
+		}
+	}
+	waitNoOpenConns(t, &tracker)
+}

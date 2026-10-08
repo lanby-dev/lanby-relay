@@ -91,8 +91,11 @@ func executeHTTPCheck(ctx context.Context, cfg RelayCheckConfig, start time.Time
 	}
 	httpClient := &http.Client{
 		Timeout: httpTimeout,
+		// A fresh Transport per check is never reused, so keep-alive would leave
+		// its idle connection open forever.
 		Transport: &http.Transport{
-			TLSClientConfig: tlsCfg,
+			TLSClientConfig:   tlsCfg,
+			DisableKeepAlives: true,
 		},
 		CheckRedirect: func(_ *http.Request, via []*http.Request) error {
 			if !cfg.FollowRedirects {
