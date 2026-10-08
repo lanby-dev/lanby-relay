@@ -564,6 +564,9 @@ func (r *Runner) loadIdentity() (Identity, error) {
 	return id, nil
 }
 
+// renameFile is os.Rename; tests replace it to simulate a rename that the filesystem refuses.
+var renameFile = os.Rename
+
 func (r *Runner) saveIdentity(id Identity) error {
 	dir := filepath.Dir(r.cfg.IdentityPath)
 	if err := os.MkdirAll(dir, 0o755); err != nil {
@@ -573,5 +576,43 @@ func (r *Runner) saveIdentity(id Identity) error {
 	if err != nil {
 		return err
 	}
-	return os.WriteFile(r.cfg.IdentityPath, b, 0o600)
+	if err := writeFileAtomic(r.cfg.IdentityPath, b, 0o600); err != nil {
+		// Atomic replace is not always possible (e.g. a single-file bind mount cannot be
+		// renamed over). A plain write is still better than losing the identity.
+		return os.WriteFile(r.cfg.IdentityPath, b, 0o600)
+	}
+	return nil
+}
+
+// writeFileAtomic writes data to a temp file in the same directory and renames it over
+// path, so a crash mid-write never leaves a truncated file at path.
+func writeFileAtomic(path string, data []byte, perm os.FileMode) error {
+	tmp, err := os.CreateTemp(filepath.Dir(path), ".identity-*.tmp")
+	if err != nil {
+		return err
+	}
+	tmpName := tmp.Name()
+	fail := func(err error) error {
+		_ = tmp.Close()
+		_ = os.Remove(tmpName)
+		return err
+	}
+	if err := tmp.Chmod(perm); err != nil {
+		return fail(err)
+	}
+	if _, err := tmp.Write(data); err != nil {
+		return fail(err)
+	}
+	if err := tmp.Sync(); err != nil {
+		return fail(err)
+	}
+	if err := tmp.Close(); err != nil {
+		_ = os.Remove(tmpName)
+		return err
+	}
+	if err := renameFile(tmpName, path); err != nil {
+		_ = os.Remove(tmpName)
+		return err
+	}
+	return nil
 }
