@@ -149,3 +149,55 @@ func TestClient_doJSON_ErrorStatusIncludesPath(t *testing.T) {
 		t.Fatalf("expected error to include path, got %q", err.Error())
 	}
 }
+
+func TestClient_Sync_UnauthorizedIsDetected(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusUnauthorized)
+	}))
+	defer srv.Close()
+
+	c := NewClient(srv.URL)
+	_, err := c.Sync(context.Background(), Identity{RelayID: "r1", RelaySecret: "bad"}, "", "1.0.0", nil)
+	if err == nil {
+		t.Fatal("expected error for 401 response")
+	}
+	if !isUnauthorized(err) {
+		t.Fatalf("401 response should be unauthorized, got %v", err)
+	}
+}
+
+func TestClient_Sync_ServerErrorIsNotUnauthorized(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusInternalServerError)
+	}))
+	defer srv.Close()
+
+	c := NewClient(srv.URL)
+	_, err := c.Sync(context.Background(), Identity{RelayID: "r1", RelaySecret: "s"}, "", "1.0.0", nil)
+	if err == nil {
+		t.Fatal("expected error for 500 response")
+	}
+	if isUnauthorized(err) {
+		t.Fatalf("500 response must not be unauthorized, got %v", err)
+	}
+}
+
+// Network errors embed the request URL, which contains the relay ID. A relay ID
+// containing "401" must not make a transient network failure look like a 401.
+func TestClient_Sync_NetworkErrorWithRelayID401IsNotUnauthorized(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {}))
+	url := srv.URL
+	srv.Close() // connection refused from here on
+
+	c := NewClient(url)
+	_, err := c.Sync(context.Background(), Identity{RelayID: "ab401c2e-0000", RelaySecret: "s"}, "", "1.0.0", nil)
+	if err == nil {
+		t.Fatal("expected network error")
+	}
+	if !strings.Contains(err.Error(), "401") {
+		t.Fatalf("test premise broken: error should embed relay ID, got %v", err)
+	}
+	if isUnauthorized(err) {
+		t.Fatalf("network error must not be unauthorized, got %v", err)
+	}
+}

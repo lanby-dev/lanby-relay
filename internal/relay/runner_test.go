@@ -25,9 +25,6 @@ func TestIsUnauthorized(t *testing.T) {
 	if isUnauthorized(nil) {
 		t.Fatal("nil error should not be unauthorized")
 	}
-	if !isUnauthorized(assertErr("request failed: 401 Unauthorized")) {
-		t.Fatal("401 error should be unauthorized")
-	}
 	if isUnauthorized(assertErr("500 server error")) {
 		t.Fatal("500 error should not be unauthorized")
 	}
