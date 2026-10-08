@@ -610,3 +610,42 @@ func TestRunRelayURLTests_IgnoreTLSErrors_DoesNotLeakConnections(t *testing.T) {
 	}
 	waitNoOpenConns(t, &tracker)
 }
+
+// net.Resolver.LookupCNAME returns the queried name itself when the host has no
+// CNAME record. That must not count as "has a CNAME".
+func TestExecuteCheck_DNS_CNAME_HostWithoutCNAMEFails(t *testing.T) {
+	res := executeCheck(RelayCheckConfig{
+		MonitorID:      "m-cname",
+		Type:           "dns",
+		Target:         "localhost", // resolved from /etc/hosts: an address, never a CNAME
+		DNSHost:        "localhost",
+		DNSType:        "CNAME",
+		TimeoutSeconds: 3,
+	}, AllowList{})
+	if res.Status != "fail" {
+		t.Fatalf("expected fail for host without CNAME, got %+v", res)
+	}
+	if !strings.Contains(res.Error, "no CNAME") {
+		t.Fatalf("expected 'no CNAME' error, got %q", res.Error)
+	}
+}
+
+func TestCNAMETarget(t *testing.T) {
+	cases := []struct {
+		name, host, canonical, want string
+	}{
+		{"no cname: resolver echoes host", "app.example.com", "app.example.com.", ""},
+		{"no cname: echo differs in case", "App.Example.com", "app.example.com.", ""},
+		{"no cname: host given with trailing dot", "app.example.com.", "app.example.com.", ""},
+		{"no cname: echo without trailing dot", "app.example.com", "app.example.com", ""},
+		{"real cname", "app.example.com", "lb.example.net.", "lb.example.net"},
+		{"empty answer", "app.example.com", "", ""},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := cnameTarget(tc.host, tc.canonical); got != tc.want {
+				t.Fatalf("cnameTarget(%q, %q) = %q, want %q", tc.host, tc.canonical, got, tc.want)
+			}
+		})
+	}
+}
