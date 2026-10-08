@@ -1,10 +1,16 @@
 package relay
 
 import (
+	"context"
+	"encoding/json"
+	"io"
+	"log/slog"
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"path/filepath"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -155,5 +161,93 @@ func TestExecuteCheck_DNS_NameserverOutsideAllowListIsNotQueried(t *testing.T) {
 	}
 	if res.Status != "error" || !strings.Contains(res.Error, "ALLOWED_PROBE_HOSTS") {
 		t.Fatalf("expected error mentioning ALLOWED_PROBE_HOSTS, got %+v", res)
+	}
+}
+
+// The allowlist restricts probe targets only. A restrictive list that does not
+// contain the platform's address must never stop the relay talking to the API.
+func TestRunner_RestrictiveAllowListDoesNotBlockPlatformSync(t *testing.T) {
+	probeTarget, probeHits := hitCounter(t)
+	target := localhostURL(probeTarget) // outside the allowlist
+
+	var (
+		mu          sync.Mutex
+		syncs       int
+		testResults []RelayURLTestResult
+	)
+	gotTestResults := make(chan struct{})
+	platform := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/api/v1/relays/r1/sync" || r.Header.Get("Authorization") != "Bearer secret" {
+			http.Error(w, "unexpected request", http.StatusUnauthorized)
+			return
+		}
+		var body struct {
+			TestResults []RelayURLTestResult `json:"test_results"`
+		}
+		_ = json.NewDecoder(r.Body).Decode(&body)
+		mu.Lock()
+		syncs++
+		first := syncs == 1
+		if len(body.TestResults) > 0 {
+			testResults = body.TestResults
+			select {
+			case <-gotTestResults:
+			default:
+				close(gotTestResults)
+			}
+		}
+		mu.Unlock()
+		if !first {
+			_ = json.NewEncoder(w).Encode(SyncResponse{ConfigUnchanged: true, ConfigETag: "v1", ConfigPollIntervalSeconds: 30})
+			return
+		}
+		_ = json.NewEncoder(w).Encode(SyncResponse{
+			ConfigETag:                "v1",
+			ConfigPollIntervalSeconds: 30,
+			Config: &SyncConfigPayload{
+				Checks: []RelayCheckConfig{{MonitorID: "m1", Type: "http", Target: target, IntervalSeconds: 30, TimeoutSeconds: 2}},
+				Tests:  []RelayURLTest{{ID: "t1", URL: target}},
+			},
+		})
+	}))
+	defer platform.Close() // 127.0.0.1 — not in the allowlist below
+
+	cfg := Config{
+		PlatformURL:        platform.URL,
+		IdentityPath:       filepath.Join(t.TempDir(), "identity.json"),
+		RelayVersion:       "test",
+		DefaultPollSeconds: 30,
+		AllowedProbeHosts:  mustAllowList(t, "192.168.0.0/16"),
+	}
+	runner := NewRunner(slog.New(slog.NewTextHandler(io.Discard, nil)), cfg, NewClient(platform.URL))
+	if err := runner.saveIdentity(Identity{RelayID: "r1", RelaySecret: "secret", PlatformURL: platform.URL}); err != nil {
+		t.Fatalf("save identity: %v", err)
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+	go func() { done <- runner.Start(ctx) }()
+
+	select {
+	case <-gotTestResults:
+	case <-time.After(5 * time.Second):
+		t.Fatal("relay never reported URL test results to the platform")
+	}
+	time.Sleep(1500 * time.Millisecond) // span a probe tick so the blocked check would have run
+	cancel()
+	if err := <-done; err != nil {
+		t.Fatalf("runner stopped with error: %v", err)
+	}
+
+	mu.Lock()
+	defer mu.Unlock()
+	if syncs < 2 {
+		t.Fatalf("expected relay to sync with platform at least twice, got %d", syncs)
+	}
+	if len(testResults) != 1 || testResults[0].Reachable || !strings.Contains(testResults[0].Error, "ALLOWED_PROBE_HOSTS") {
+		t.Fatalf("expected blocked URL test result reported to platform, got %+v", testResults)
+	}
+	if probeHits.Load() != 0 {
+		t.Fatalf("non-allowlisted probe target was contacted (%d hits)", probeHits.Load())
 	}
 }

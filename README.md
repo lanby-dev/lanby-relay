@@ -55,7 +55,7 @@ All configuration is via environment variables. Defaults work for most deploymen
 
 When set, the relay only executes probes whose target matches at least one entry. Targets that don't match are skipped and logged as a warning. If unset, all targets are permitted.
 
-The allowlist also applies to HTTP redirect destinations, custom DNS nameservers (`dns_nameserver`), and ad-hoc URL tests started from the console.
+The allowlist also applies to HTTP redirect destinations, custom DNS nameservers (`dns_nameserver`), and ad-hoc URL tests started from the console. It never applies to the relay's connection to the Lanby platform (`PLATFORM_URL`), so a restrictive list cannot lock the relay out of the API.
 
 Supported pattern forms:
 
