@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/tls"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -12,7 +13,6 @@ import (
 	"path/filepath"
 	"reflect"
 	"runtime"
-	"strings"
 	"sync"
 	"time"
 )
@@ -466,10 +466,7 @@ func (r *Runner) runLoop(ctx context.Context, id Identity) error {
 }
 
 func isUnauthorized(err error) bool {
-	if err == nil {
-		return false
-	}
-	return strings.Contains(err.Error(), "401")
+	return errors.Is(err, ErrUnauthorized)
 }
 
 // Ad-hoc URL tests from the UI share this timeout. LAN targets (e.g. routers) may be

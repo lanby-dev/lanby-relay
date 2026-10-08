@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"strings"
@@ -15,6 +16,9 @@ const (
 	httpTimeout        = 60 * time.Second
 	claimHTTPTimeout   = (claimStatusWaitSec + 20) * time.Second
 )
+
+// ErrUnauthorized is returned (wrapped) when the platform rejects the relay credential.
+var ErrUnauthorized = errors.New("unauthorized")
 
 type Client struct {
 	baseURL string
@@ -90,7 +94,7 @@ func (c *Client) Sync(ctx context.Context, id Identity, etag, relayVersion strin
 	}
 	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode == http.StatusUnauthorized {
-		return nil, fmt.Errorf("sync request failed: 401 Unauthorized")
+		return nil, fmt.Errorf("sync request failed: 401 Unauthorized: %w", ErrUnauthorized)
 	}
 	if resp.StatusCode >= 300 {
 		return nil, fmt.Errorf("sync request failed: %s", resp.Status)
