@@ -42,7 +42,7 @@ func TestExecuteCheck_HTTP(t *testing.T) {
 		Type:           "http",
 		Target:         okSrv.URL,
 		TimeoutSeconds: 2,
-	})
+	}, AllowList{})
 	if res.Status != "ok" || res.StatusCode != http.StatusOK {
 		t.Fatalf("expected ok/200 result, got %+v", res)
 	}
@@ -58,7 +58,7 @@ func TestExecuteCheck_HTTP(t *testing.T) {
 		Target:         failSrv.URL,
 		ExpectedStatus: http.StatusOK,
 		TimeoutSeconds: 2,
-	})
+	}, AllowList{})
 	if res.Status != "fail" {
 		t.Fatalf("expected fail result for status mismatch, got %+v", res)
 	}
@@ -80,7 +80,7 @@ func TestExecuteCheck_HTTP_FollowRedirects(t *testing.T) {
 		Target:          redir.URL,
 		FollowRedirects: false,
 		TimeoutSeconds:  3,
-	})
+	}, AllowList{})
 	if noFollow.StatusCode != http.StatusFound {
 		t.Fatalf("expected 302 without follow redirects, got status %d", noFollow.StatusCode)
 	}
@@ -94,7 +94,7 @@ func TestExecuteCheck_HTTP_FollowRedirects(t *testing.T) {
 		Target:          redir.URL,
 		FollowRedirects: true,
 		TimeoutSeconds:  3,
-	})
+	}, AllowList{})
 	if follow.Status != "ok" || follow.StatusCode != http.StatusOK {
 		t.Fatalf("expected ok/200 when following redirects, got %+v", follow)
 	}
@@ -106,7 +106,7 @@ func TestExecuteCheck_Ping_Localhost(t *testing.T) {
 		Type:           "ping",
 		Target:         "127.0.0.1",
 		TimeoutSeconds: 5,
-	})
+	}, AllowList{})
 	if res.Status == "ok" {
 		return
 	}
@@ -125,7 +125,7 @@ func TestExecuteCheck_DNS(t *testing.T) {
 		DNSHost:        "localhost",
 		DNSType:        "A",
 		TimeoutSeconds: 3,
-	})
+	}, AllowList{})
 	if res.Status != "ok" {
 		t.Fatalf("expected ok DNS result, got %+v", res)
 	}
@@ -140,7 +140,7 @@ func TestExecuteCheck_DNS_CustomNameserver(t *testing.T) {
 		DNSType:        "A",
 		DNSNameserver:  "8.8.8.8",
 		TimeoutSeconds: 10,
-	})
+	}, AllowList{})
 	if res.Status != "ok" {
 		t.Skip("public resolver check failed (offline or blocked): ", res.Error)
 	}
@@ -167,14 +167,14 @@ func TestExecuteCheck_TCP(t *testing.T) {
 		Type:           "tcp",
 		Target:         ln.Addr().String(),
 		TimeoutSeconds: 2,
-	})
+	}, AllowList{})
 	if res.Status != "ok" {
 		t.Fatalf("expected ok TCP result, got %+v", res)
 	}
 }
 
 func TestExecuteCheck_UnsupportedType(t *testing.T) {
-	res := executeCheck(RelayCheckConfig{MonitorID: "m3", Type: "dns"})
+	res := executeCheck(RelayCheckConfig{MonitorID: "m3", Type: "dns"}, AllowList{})
 	if res.Status != "error" {
 		t.Fatalf("unsupported type should return error, got %+v", res)
 	}
@@ -190,7 +190,7 @@ func TestRunRelayURLTests(t *testing.T) {
 		{ID: "t1", URL: reachableSrv.URL},
 		{ID: "t2", URL: "http://127.0.0.1:1"},
 	}
-	results := runRelayURLTests(tests)
+	results := runRelayURLTests(tests, AllowList{})
 	if len(results) != 2 {
 		t.Fatalf("expected 2 test results, got %d", len(results))
 	}
@@ -220,7 +220,7 @@ func TestRunRelayURLTests_IgnoreTLSErrors(t *testing.T) {
 		t.Fatalf("expected https URL, got %q", u)
 	}
 
-	strict := runRelayURLTests([]RelayURLTest{{ID: "t_strict", URL: u}})
+	strict := runRelayURLTests([]RelayURLTest{{ID: "t_strict", URL: u}}, AllowList{})
 	if len(strict) != 1 || strict[0].Reachable {
 		t.Fatalf("expected TLS verify failure without ignore_tls_errors, strict result %+v", strict[0])
 	}
@@ -229,7 +229,7 @@ func TestRunRelayURLTests_IgnoreTLSErrors(t *testing.T) {
 		t.Fatalf("expected TLS-ish error, got %q", strict[0].Error)
 	}
 
-	relaxed := runRelayURLTests([]RelayURLTest{{ID: "t_relaxed", URL: u, IgnoreTLSErrors: true}})
+	relaxed := runRelayURLTests([]RelayURLTest{{ID: "t_relaxed", URL: u, IgnoreTLSErrors: true}}, AllowList{})
 	if len(relaxed) != 1 || !relaxed[0].Reachable || relaxed[0].StatusCode != http.StatusOK {
 		t.Fatalf("expected reachable OK with ignore_tls_errors, relaxed result %+v", relaxed[0])
 	}
@@ -345,7 +345,7 @@ func TestExecuteCheck_HTTP_BodyContains(t *testing.T) {
 		Target:           srv.URL,
 		HTTPBodyContains: "hello",
 		TimeoutSeconds:   2,
-	})
+	}, AllowList{})
 	if res.Status != "ok" {
 		t.Fatalf("expected ok when body contains substring, got %+v", res)
 	}
@@ -356,7 +356,7 @@ func TestExecuteCheck_HTTP_BodyContains(t *testing.T) {
 		Target:           srv.URL,
 		HTTPBodyContains: "goodbye",
 		TimeoutSeconds:   2,
-	})
+	}, AllowList{})
 	if res.Status != "fail" {
 		t.Fatalf("expected fail when body missing substring, got %+v", res)
 	}
@@ -374,7 +374,7 @@ func TestExecuteCheck_HTTP_SuccessStatusCodes(t *testing.T) {
 		Target:                 srv.URL,
 		SuccessHTTPStatusCodes: []int{202},
 		TimeoutSeconds:         2,
-	})
+	}, AllowList{})
 	if res.Status != "ok" {
 		t.Fatalf("expected ok for 202 in success codes, got %+v", res)
 	}
@@ -385,7 +385,7 @@ func TestExecuteCheck_HTTP_SuccessStatusCodes(t *testing.T) {
 		Target:                 srv.URL,
 		SuccessHTTPStatusCodes: []int{200},
 		TimeoutSeconds:         2,
-	})
+	}, AllowList{})
 	if res.Status != "fail" {
 		t.Fatalf("expected fail for 202 not in success codes, got %+v", res)
 	}
@@ -448,7 +448,7 @@ func TestExecuteCheck_DNS_ExpectMatch(t *testing.T) {
 		DNSType:        "A",
 		DNSExpect:      "127",
 		TimeoutSeconds: 3,
-	})
+	}, AllowList{})
 	if res.Status != "ok" {
 		t.Fatalf("expected ok when DNS expect matches, got %+v", res)
 	}
@@ -462,7 +462,7 @@ func TestExecuteCheck_DNS_ExpectNoMatch(t *testing.T) {
 		DNSType:        "A",
 		DNSExpect:      "999.999.999.999",
 		TimeoutSeconds: 3,
-	})
+	}, AllowList{})
 	if res.Status != "fail" {
 		t.Fatalf("expected fail when DNS expect does not match, got %+v", res)
 	}
@@ -473,7 +473,7 @@ func TestExecuteCheck_DNS_MissingHost(t *testing.T) {
 		MonitorID:      "m-dns-nohost",
 		Type:           "dns",
 		TimeoutSeconds: 3,
-	})
+	}, AllowList{})
 	if res.Status != "error" {
 		t.Fatalf("expected error for missing dns_host, got %+v", res)
 	}
@@ -486,7 +486,7 @@ func TestExecuteCheck_DNS_UnsupportedType(t *testing.T) {
 		DNSHost:        "localhost",
 		DNSType:        "BOGUS",
 		TimeoutSeconds: 3,
-	})
+	}, AllowList{})
 	if res.Status != "error" {
 		t.Fatalf("expected error for unsupported DNS type, got %+v", res)
 	}
@@ -498,7 +498,7 @@ func TestExecuteCheck_TCP_Unreachable(t *testing.T) {
 		Type:           "tcp",
 		Target:         "127.0.0.1:1",
 		TimeoutSeconds: 1,
-	})
+	}, AllowList{})
 	if res.Status != "error" {
 		t.Fatalf("expected error for unreachable TCP, got %+v", res)
 	}

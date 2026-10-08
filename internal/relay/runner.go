@@ -261,7 +261,7 @@ func (r *Runner) runLoop(ctx context.Context, id Identity) error {
 				"target", c.Target,
 				"interval_seconds", intervalSec,
 			)
-			res := executeCheck(c)
+			res := executeCheck(c, r.cfg.AllowedProbeHosts)
 			res.State, res.StateChanged = "", false
 			if probeSuccess(res.Status) {
 				r.log.Debug("probe result",
@@ -321,7 +321,7 @@ func (r *Runner) runLoop(ctx context.Context, id Identity) error {
 				r.log.Info("relay config updated", "monitors", len(updatedChecks))
 			}
 			if len(cfg.Tests) > 0 {
-				testResults := runRelayURLTests(cfg.Tests)
+				testResults := runRelayURLTests(cfg.Tests, r.cfg.AllowedProbeHosts)
 				bufMu.Lock()
 				pendingTests = append(pendingTests, testResults...)
 				bufMu.Unlock()
@@ -473,8 +473,11 @@ func isUnauthorized(err error) bool {
 // slow to refuse or accept TCP; 10s was too aggressive and conflicted with DefaultClient.
 const relayAdHocURLTestTimeout = 30 * time.Second
 
-func runRelayURLTests(tests []RelayURLTest) []RelayURLTestResult {
-	redirectPolicy := func(_ *http.Request, via []*http.Request) error {
+func runRelayURLTests(tests []RelayURLTest, allow AllowList) []RelayURLTestResult {
+	redirectPolicy := func(req *http.Request, via []*http.Request) error {
+		if !allow.Allowed(req.URL.String()) {
+			return errBlockedByAllowList(req.URL.String())
+		}
 		if len(via) >= 10 {
 			return http.ErrUseLastResponse
 		}
@@ -495,6 +498,10 @@ func runRelayURLTests(tests []RelayURLTest) []RelayURLTestResult {
 			}
 			client.Transport = tr
 			closeIdle = tr.CloseIdleConnections
+		}
+		if !allow.Allowed(t.URL) {
+			out = append(out, RelayURLTestResult{TestID: t.ID, Reachable: false, Error: errBlockedByAllowList(t.URL).Error()})
+			continue
 		}
 		start := time.Now()
 		req, err := http.NewRequest(http.MethodGet, t.URL, nil)
