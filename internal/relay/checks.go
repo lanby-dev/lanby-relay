@@ -105,6 +105,10 @@ func executeHTTPCheck(ctx context.Context, cfg RelayCheckConfig, start time.Time
 		},
 	}
 
+	// This Transport is never reused and has no idle timeout, so close whatever
+	// keep-alive connections it holds once the check is done.
+	defer httpClient.CloseIdleConnections()
+
 	resp, err := httpClient.Do(req)
 	result.DurationMs = time.Since(start).Milliseconds()
 	if err != nil {

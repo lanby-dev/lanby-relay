@@ -486,10 +486,15 @@ func runRelayURLTests(tests []RelayURLTest) []RelayURLTestResult {
 			Timeout:       relayAdHocURLTestTimeout,
 			CheckRedirect: redirectPolicy,
 		}
+		// Per-test Transport is never reused and has no idle timeout, so its idle
+		// connections must be closed explicitly. The default Transport is shared; leave it.
+		closeIdle := func() {}
 		if t.IgnoreTLSErrors {
-			client.Transport = &http.Transport{
+			tr := &http.Transport{
 				TLSClientConfig: &tls.Config{InsecureSkipVerify: true}, //nolint:gosec
 			}
+			client.Transport = tr
+			closeIdle = tr.CloseIdleConnections
 		}
 		start := time.Now()
 		req, err := http.NewRequest(http.MethodGet, t.URL, nil)
@@ -500,11 +505,13 @@ func runRelayURLTests(tests []RelayURLTest) []RelayURLTestResult {
 		resp, err := client.Do(req)
 		lat := time.Since(start).Milliseconds()
 		if err != nil {
+			closeIdle()
 			out = append(out, RelayURLTestResult{TestID: t.ID, Reachable: false, Error: err.Error(), LatencyMs: lat})
 			continue
 		}
 		_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, 8192))
 		_ = resp.Body.Close()
+		closeIdle()
 		out = append(out, RelayURLTestResult{
 			TestID:     t.ID,
 			Reachable:  true,
