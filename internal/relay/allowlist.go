@@ -105,3 +105,8 @@ func extractTargetHost(target string) string {
 	}
 	return target
 }
+
+// errBlockedByAllowList is the error for a probe destination outside ALLOWED_PROBE_HOSTS.
+func errBlockedByAllowList(target string) error {
+	return fmt.Errorf("target %q blocked by ALLOWED_PROBE_HOSTS", target)
+}

@@ -20,7 +20,7 @@ import (
 
 const maxRelayProbeBodyBytes = 1 << 20
 
-func executeCheck(cfg RelayCheckConfig) ResultItem {
+func executeCheck(cfg RelayCheckConfig, allow AllowList) ResultItem {
 	start := time.Now()
 	timeout := time.Duration(cfg.TimeoutSeconds) * time.Second
 	if timeout <= 0 {
@@ -36,11 +36,11 @@ func executeCheck(cfg RelayCheckConfig) ResultItem {
 
 	switch cfg.Type {
 	case "http":
-		return executeHTTPCheck(ctx, cfg, start)
+		return executeHTTPCheck(ctx, cfg, start, allow)
 	case "tcp":
 		return executeTCPCheck(ctx, cfg, start)
 	case "dns":
-		return executeDNSCheck(ctx, cfg, start)
+		return executeDNSCheck(ctx, cfg, start, allow)
 	case "grpc_health":
 		return executeGRPCHealthCheck(ctx, cfg, start)
 	case "ping":
@@ -54,7 +54,7 @@ func executeCheck(cfg RelayCheckConfig) ResultItem {
 	}
 }
 
-func executeHTTPCheck(ctx context.Context, cfg RelayCheckConfig, start time.Time) ResultItem {
+func executeHTTPCheck(ctx context.Context, cfg RelayCheckConfig, start time.Time, allow AllowList) ResultItem {
 	result := ResultItem{MonitorID: cfg.MonitorID, Timestamp: start.UTC()}
 
 	method := cfg.Method
@@ -94,9 +94,12 @@ func executeHTTPCheck(ctx context.Context, cfg RelayCheckConfig, start time.Time
 		Transport: &http.Transport{
 			TLSClientConfig: tlsCfg,
 		},
-		CheckRedirect: func(_ *http.Request, via []*http.Request) error {
+		CheckRedirect: func(req *http.Request, via []*http.Request) error {
 			if !cfg.FollowRedirects {
 				return http.ErrUseLastResponse
+			}
+			if !allow.Allowed(req.URL.String()) {
+				return errBlockedByAllowList(req.URL.String())
 			}
 			if len(via) >= maxRedir {
 				return fmt.Errorf("stopped after %d redirects", maxRedir)
@@ -208,7 +211,7 @@ func executeTCPCheck(ctx context.Context, cfg RelayCheckConfig, start time.Time)
 	return result
 }
 
-func executeDNSCheck(ctx context.Context, cfg RelayCheckConfig, start time.Time) ResultItem {
+func executeDNSCheck(ctx context.Context, cfg RelayCheckConfig, start time.Time, allow AllowList) ResultItem {
 	result := ResultItem{MonitorID: cfg.MonitorID, Timestamp: start.UTC()}
 	host := strings.TrimSpace(cfg.DNSHost)
 	if host == "" {
@@ -238,6 +241,13 @@ func executeDNSCheck(ctx context.Context, cfg RelayCheckConfig, start time.Time)
 
 	var answers []string
 	if nsAddr != "" {
+		if !allow.Allowed(nsAddr) {
+			result.DurationMs = time.Since(start).Milliseconds()
+			result.Status = "error"
+			result.Error = errBlockedByAllowList(nsAddr).Error()
+			result.State = "down"
+			return result
+		}
 		var err error
 		answers, err = queryDNSNameserver(ctx, nsAddr, host, qtype)
 		if err != nil {
