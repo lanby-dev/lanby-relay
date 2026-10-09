@@ -144,37 +144,12 @@ func (r *Runner) runLoop(ctx context.Context, id Identity) error {
 	var bufMu sync.Mutex
 	pendingProbe := make([]ResultItem, 0, 32)
 	pendingTests := make([]RelayURLTestResult, 0, 8)
-	lastOutcome := map[string]string{}
+	health := newHealthTracker()
 	stateByMonitor := map[string]string{}
-	highTouch := false
 
 	updateOutcomesAndHighTouch := func(batch []ResultItem, cur []RelayCheckConfig) {
 		bufMu.Lock()
-		prev := highTouch
-		for _, res := range batch {
-			lastOutcome[res.MonitorID] = res.Status
-			if !probeSuccess(res.Status) {
-				highTouch = true
-			}
-		}
-		if highTouch {
-			if len(cur) == 0 {
-				highTouch = false
-			} else {
-				allGreen := true
-				for _, c := range cur {
-					if st, ok := lastOutcome[c.MonitorID]; !ok || !probeSuccess(st) {
-						allGreen = false
-						break
-					}
-				}
-				if allGreen {
-					highTouch = false
-				}
-			}
-		}
-		entered := !prev && highTouch
-		exited := prev && !highTouch
+		entered, exited := health.record(batch, cur, r.cfg.AllowedProbeHosts)
 		bufMu.Unlock()
 		if entered {
 			r.log.Info("relay entering high-touch mode: one or more monitors are unhealthy")
@@ -289,7 +264,7 @@ func (r *Runner) runLoop(ctx context.Context, id Identity) error {
 		appendPending(results)
 
 		bufMu.Lock()
-		doImmediate := highTouch
+		doImmediate := health.highTouch
 		bufMu.Unlock()
 		if doImmediate {
 			syncOnce()
