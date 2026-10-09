@@ -341,7 +341,9 @@ func (r *Runner) runLoop(ctx context.Context, id Identity) error {
 				}
 				pollSeconds = clampRelayPollSeconds(pollSeconds)
 				resetSyncTicker()
-				resp, err = r.client.Sync(ctx, id, "", r.cfg.RelayVersion, extra)
+				// Buffered results were already put back above; sending extra again would
+				// deliver them twice. They go out with the next regular sync.
+				resp, err = r.client.Sync(ctx, id, "", r.cfg.RelayVersion, nil)
 				if err != nil {
 					r.log.Warn("immediate sync after re-claim failed", "error", err)
 					return
