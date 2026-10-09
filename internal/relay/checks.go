@@ -300,7 +300,7 @@ func executeDNSCheck(ctx context.Context, cfg RelayCheckConfig, start time.Time,
 				result.State = "down"
 				return result
 			}
-			cname = strings.TrimSuffix(cname, ".")
+			cname = cnameTarget(host, cname)
 			if cname == "" {
 				result.DurationMs = time.Since(start).Milliseconds()
 				result.Status = "fail"
@@ -504,4 +504,15 @@ func executePingCheck(ctx context.Context, cfg RelayCheckConfig, start time.Time
 		result.State = "up"
 		return result
 	}
+}
+
+// cnameTarget returns the CNAME target for host, or "" when host has none.
+// net.Resolver.LookupCNAME returns the queried name itself when there is no
+// CNAME record, so an answer equal to host means "no CNAME".
+func cnameTarget(host, canonical string) string {
+	canonical = strings.TrimSuffix(canonical, ".")
+	if strings.EqualFold(canonical, strings.TrimSuffix(host, ".")) {
+		return ""
+	}
+	return canonical
 }
